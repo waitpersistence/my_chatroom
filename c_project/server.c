@@ -25,9 +25,16 @@ typedef struct node_t
     struct node_t *next; 
 } list;
 
+// <-- 修正 1: 创建一个新的结构体，用于向handler线程传递参数
+typedef struct
+{
+    int sockfd;
+    list *head; // 我们需要传递链表头指针
+} thread_args_t;
+
 // 全局变量声明（供handler线程使用）
 struct sockaddr_in saddr, caddr;  // 注意：main中不要重复定义
-
+pthread_mutex_t list_mutex; // <-- 修正 2: 定义一个全局互斥锁
 // 线程函数声明（必须在main前声明）
 void *handler(void *arg);
 
@@ -56,7 +63,16 @@ int main(int argc, char const *argv[])
         perror("socket error");
         return -1;
     }
-
+    //端口复用
+    // <-- 修正：添加端口复用选项
+    int opt = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+    {
+        perror("setsockopt error");
+        close(sockfd);
+        return -1;
+    }
+    // <-- 修正结束
     // 初始化服务器地址
     memset(&saddr, 0, sizeof(saddr));  // 清空结构体
     saddr.sin_family = AF_INET;
@@ -79,13 +95,31 @@ int main(int argc, char const *argv[])
         close(sockfd);
         return -1;
     }
-
+    // <-- 修正 3: 初始化互斥锁
+    if (pthread_mutex_init(&list_mutex, NULL) != 0)
+    {
+        perror("mutex init error");
+        close(sockfd);
+        return -1;
+    }
+    // <-- 修正 4: 准备传递给线程的参数
+    // 我们必须使用 malloc，因为 'args' 必须在 main 退出后仍然有效
+    thread_args_t *args = malloc(sizeof(thread_args_t));
+    if (args == NULL)
+    {
+        perror("malloc args error");
+        close(sockfd);
+        return -1;
+    }
+    args->sockfd = sockfd;
+    args->head = head; // 传递真正的 head 指针
     // 创建handler线程（用于服务器主动发送消息）
     pthread_t tid;
-    if (pthread_create(&tid, NULL, handler, &sockfd) != 0)
+    if (pthread_create(&tid, NULL, handler, args) != 0)
     {
         perror("pthread_create error");
         close(sockfd);
+        free(args); // 创建失败时释放内存
         return -1;
     }
     pthread_detach(tid);  // 分离线程，自动回收资源
@@ -110,7 +144,9 @@ int main(int argc, char const *argv[])
             login(sockfd, msg, head, caddr);
         }
         else if (msg.type == 'C')  // 聊天
-        {
+        {   
+            // <-- 修正：在这里添加服务器日志
+            printf("Chat Log [%s]: %s\n", msg.id, msg.text);
             chat(sockfd, msg, head, caddr);
         }
         else if (msg.type == 'Q')  // 退出
@@ -122,6 +158,7 @@ int main(int argc, char const *argv[])
     }
 
     close(sockfd);
+    pthread_mutex_destroy(&list_mutex); // <-- 修正 6: 销毁互斥锁 (尽管此程序中不会执行到)
     return 0;
 }
 
@@ -151,7 +188,8 @@ void login(int sockfd, msg_t msg, list *head, struct sockaddr_in caddr)
     // 保存新客户端地址
     new_node->caddr = caddr;
     new_node->next = NULL;
-
+    // <-- 修正 7: 在访问链表前加锁
+    pthread_mutex_lock(&list_mutex);
     // 尾插法加入链表
     list *p = head;
     while (p->next != NULL)
@@ -163,13 +201,17 @@ void login(int sockfd, msg_t msg, list *head, struct sockaddr_in caddr)
                (struct sockaddr *)&(p->caddr), sizeof(p->caddr));
     }
     p->next = new_node;
+    // <-- 修正 8: 完成访问后解锁
+    pthread_mutex_unlock(&list_mutex);
     printf("新用户登录：ID=%s, IP=%s, Port=%d\n",
            msg.id, inet_ntoa(caddr.sin_addr), ntohs(caddr.sin_port));
 }
 
 // 处理聊天消息（群发）
 void chat(int sockfd, msg_t msg, list *head, struct sockaddr_in caddr)
-{
+{   
+    // <-- 修正 9: 加锁
+    pthread_mutex_lock(&list_mutex);
     list *p = head->next;  // 跳过头节点
     while (p != NULL)
     {
@@ -181,11 +223,15 @@ void chat(int sockfd, msg_t msg, list *head, struct sockaddr_in caddr)
         }
         p = p->next;
     }
+    // <-- 修正 10: 解锁
+    pthread_mutex_unlock(&list_mutex);
 }
 
 // 处理退出消息
 void quit(int sockfd, msg_t msg, list *head, struct sockaddr_in caddr)
-{
+{   
+    // <-- 修正 11: 加锁
+    pthread_mutex_lock(&list_mutex);
     list *p = head;
     list *dele = NULL;
 
@@ -209,13 +255,21 @@ void quit(int sockfd, msg_t msg, list *head, struct sockaddr_in caddr)
             p = p->next;
         }
     }
+    // <-- 修正 12: 解锁
+    pthread_mutex_unlock(&list_mutex);
 }
 
 // 线程函数：服务器主动发送消息（例如管理员消息）
 void *handler(void *arg)
-{
-    int sockfd = *(int *)arg;  // 从参数获取socket描述符
+{   
+    // <-- 修正 13: 接收参数
+    thread_args_t *args = (thread_args_t *)arg;
+    int sockfd = args->sockfd;  // 从参数获取socket描述符
+    list *head = args->head;     // 从参数获取 真正的链表头
+    free(args); // 已经获取了参数，释放结构体内存
+    args = NULL;
     msg_t msg_s;
+    char input_buf[128]; // 用于 fgets
     memset(&msg_s, 0, sizeof(msg_s));
     strcpy(msg_s.id, "server");  // 服务器ID
     msg_s.type = 'C';  // 标记为聊天消息
@@ -226,15 +280,23 @@ void *handler(void *arg)
         // 读取服务器输入（注意：scanf格式修正）
         printf("server: ");
         fflush(stdout);  // 刷新缓冲区，确保提示正常显示
-        if (scanf("%[^\n]", msg_s.text) != 1)  // 读取一行（不含换行符）
+        if (fgets(input_buf, sizeof(input_buf), stdin) == NULL)
         {
-            perror("scanf error");
-            memset(msg_s.text, 0, sizeof(msg_s.text));
+            perror("fgets error");
+            continue; // 出错或EOF(Ctrl+D)
         }
-        getchar();  // 吸收换行符
-
+        // 移除 fgets 带来的换行符
+        input_buf[strcspn(input_buf, "\n")] = 0;
+        // 如果只输入了回车，则跳过
+        if (strlen(input_buf) == 0)
+        {
+            continue;
+        }
+        strcpy(msg_s.text, input_buf);
+        // <-- 修正 15: 在访问链表前加锁
+        pthread_mutex_lock(&list_mutex);
         // 群发消息给所有在线用户
-        list *head = list_create();  // 注意：这里需要访问main中的head！！（此处有问题，见说明）
+      
         list *p = head->next;
         while (p != NULL)
         {
@@ -242,6 +304,8 @@ void *handler(void *arg)
                    (struct sockaddr *)&(p->caddr), sizeof(p->caddr));
             p = p->next;
         }
+        // <-- 修正 16: 完成访问后解锁
+        pthread_mutex_unlock(&list_mutex);
     }
     return NULL;
 }
