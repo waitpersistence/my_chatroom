@@ -13,7 +13,7 @@
 
 typedef struct
 {
-    char type;      // 消息类型 L C Q
+    char type;      // 消息类型 L C Q W
     char id[32];    // 用户id
     char text[128]; // 消息内容
 } msg_t;
@@ -22,7 +22,8 @@ typedef struct
 typedef struct node_t
 {
     struct sockaddr_in caddr;
-    struct node_t *next; 
+    struct node_t *next;
+    char id[32];  //增加id
 } list;
 
 // <-- 修正 1: 创建一个新的结构体，用于向handler线程传递参数
@@ -43,7 +44,7 @@ list *list_create(void);
 void login(int sockfd, msg_t msg, list *p, struct sockaddr_in caddr);
 void chat(int sockfd, msg_t msg, list *p, struct sockaddr_in caddr);
 void quit(int sockfd, msg_t msg, list *p, struct sockaddr_in caddr);
-
+void who(int sockfd, msg_t msg, list *p, struct sockaddr_in caddr);
 int main(int argc, char const *argv[])
 {
     if (argc != 2)
@@ -155,6 +156,10 @@ int main(int argc, char const *argv[])
                    inet_ntoa(caddr.sin_addr), ntohs(caddr.sin_port), msg.id);
             quit(sockfd, msg, head, caddr);
         }
+        else if(msg.type =='W')
+        {
+            who(sockfd, msg, head, caddr);
+        }
     }
 
     close(sockfd);
@@ -187,6 +192,7 @@ void login(int sockfd, msg_t msg, list *head, struct sockaddr_in caddr)
 
     // 保存新客户端地址
     new_node->caddr = caddr;
+    strcpy(new_node->id, msg.id);
     new_node->next = NULL;
     // <-- 修正 7: 在访问链表前加锁
     pthread_mutex_lock(&list_mutex);
@@ -259,6 +265,32 @@ void quit(int sockfd, msg_t msg, list *head, struct sockaddr_in caddr)
     pthread_mutex_unlock(&list_mutex);
 }
 
+//处理/who
+void who(int sockfd, msg_t msg, list *head, struct sockaddr_in caddr)
+{
+    pthread_mutex_lock(&list_mutex);
+    msg_t response_msg;
+    memset(&response_msg,0,sizeof(response_msg));
+    response_msg.type='C';
+    strcpy(response_msg.id,"Server");
+    strcpy(response_msg.text,"---Online Users ---\n");
+    
+    list *p = head->next;  // 跳过头节点
+    while(p!=NULL){
+        //防止超过缓冲区
+        if(strlen(response_msg.text)+strlen(p->id)+2<sizeof(response_msg.text))
+        {
+            strcat(response_msg.text, p->id); // 附加 "alice"
+            strcat(response_msg.text, "\n");  // 附加一个换行符
+        }
+        p=p->next;
+   }
+    pthread_mutex_unlock(&list_mutex);
+    sendto(sockfd, &response_msg, sizeof(msg), 0, 
+                (const struct sockaddr *)&caddr, sizeof(p->caddr));
+    
+    
+}
 // 线程函数：服务器主动发送消息（例如管理员消息）
 void *handler(void *arg)
 {   

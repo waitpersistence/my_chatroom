@@ -42,7 +42,7 @@ int main(int argc, char const *argv[])
  
     msg.type = 'L';
     printf("please imput your id\n");
-    scanf("%[^\n]s", msg.id);
+    scanf("%[^\n]", msg.id);
     getchar();
  
     sendto(sockfd, &msg, sizeof(msg), 0, (struct sockaddr *)&caddr, len);
@@ -58,7 +58,7 @@ int main(int argc, char const *argv[])
         while (1)
         {
  
-            scanf("%[^\n]s", msg.text);
+            scanf("%[^\n]", msg.text);
             getchar();
             //printf("%s\n", msg.text);
  
@@ -70,12 +70,18 @@ int main(int argc, char const *argv[])
                 wait(NULL);
                 exit(-1);
             }
+            else if(strncmp(msg.text, "\\who",4)==0)
+            {
+                msg.type='W';
+                sendto(sockfd,&msg,sizeof(msg),0,(struct sockaddr *) &caddr,len);
+            }
             else
             {
                 msg.type = 'C';
+                sendto(sockfd, &msg, sizeof(msg), 0, (struct sockaddr *)&caddr, len);
             }
             //printf("sssssshu\n");
-            sendto(sockfd, &msg, sizeof(msg), 0, (struct sockaddr *)&caddr, len);
+            
         }
     }
  
