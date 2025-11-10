@@ -55,14 +55,15 @@ int main(int argc, char const *argv[])
     }
     else if (pid == 0) //子进程循环发送消息
     {
+        char input_buf[sizeof(msg.text)+sizeof(msg.id)];
         while (1)
         {
- 
-            scanf("%[^\n]", msg.text);
+            memset(input_buf,0,sizeof(input_buf));
+            scanf("%[^\n]", input_buf);
             getchar();
             //printf("%s\n", msg.text);
  
-            if (strncmp(msg.text, "quit", 4) == 0)
+            if (strncmp(input_buf, "quit", 4) == 0)
             {
                 msg.type = 'Q';
                 sendto(sockfd, &msg, sizeof(msg), 0, (struct sockaddr *)&caddr, len);
@@ -70,10 +71,16 @@ int main(int argc, char const *argv[])
                 wait(NULL);
                 exit(-1);
             }
-            else if(strncmp(msg.text, "\\who",4)==0)
+            else if(strncmp(input_buf, "\\who",4)==0)
             {
                 msg.type='W';
                 sendto(sockfd,&msg,sizeof(msg),0,(struct sockaddr *) &caddr,len);
+            }
+            else if(strncmp(input_buf, "\\msg ",5)==0){
+                msg.type='P';
+                strcpy(msg.text,input_buf+5);
+                sendto(sockfd,&msg,sizeof(msg),0,(struct sockaddr *) &caddr,len);
+                
             }
             else
             {

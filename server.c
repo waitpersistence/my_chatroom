@@ -45,6 +45,7 @@ void login(int sockfd, msg_t msg, list *p, struct sockaddr_in caddr);
 void chat(int sockfd, msg_t msg, list *p, struct sockaddr_in caddr);
 void quit(int sockfd, msg_t msg, list *p, struct sockaddr_in caddr);
 void who(int sockfd, msg_t msg, list *p, struct sockaddr_in caddr);
+void private_chat(int sockfd, msg_t msg, list *p, struct sockaddr_in caddr); // <-- 新增
 int main(int argc, char const *argv[])
 {
     if (argc != 2)
@@ -156,9 +157,13 @@ int main(int argc, char const *argv[])
                    inet_ntoa(caddr.sin_addr), ntohs(caddr.sin_port), msg.id);
             quit(sockfd, msg, head, caddr);
         }
-        else if(msg.type =='W')
+        else if(msg.type =='W')//\who
         {
             who(sockfd, msg, head, caddr);
+        }
+        else if(msg.type=='P')
+        {
+            private_chat(sockfd,msg,head,caddr);
         }
     }
 
@@ -340,4 +345,45 @@ void *handler(void *arg)
         pthread_mutex_unlock(&list_mutex);
     }
     return NULL;
+}
+//私聊功能
+void private_chat(int sockfd, msg_t msg, list *head, struct sockaddr_in caddr)
+{
+    char target_id[32];
+    char message_content[128];
+    list *target_node = NULL;
+    if(sscanf(msg.text,"%31s %[^\n]",target_id,message_content)<2)
+    {
+        return;
+    }
+    pthread_mutex_lock(&list_mutex);
+    list *p=head->next;
+    while(p!=NULL){
+        if(strcmp(p->id,target_id)==0)
+        {
+            target_node=p;//对应人
+            break;
+        }
+        p=p->next;
+    }
+    if(target_node!=NULL)
+    {
+        msg_t private_msg;
+        memset(&private_msg,0,sizeof(private_msg));
+        private_msg.type='C';
+        strcpy(private_msg.text,message_content);
+        snprintf(private_msg.id, sizeof(private_msg.id), "%s (private)", msg.id);  
+        sendto(sockfd, &private_msg, sizeof(private_msg), 0,
+               (struct sockaddr *)&(target_node->caddr), sizeof(target_node->caddr));    
+    }
+    else{
+        //没找到
+        msg_t error_msg;
+        memset(&error_msg,0,sizeof(error_msg));
+        error_msg.type='C';
+        strcpy(error_msg.id,"Server");
+        snprintf(error_msg.text,sizeof(error_msg.text),"User '%s' not found or offline",target_id);
+        sendto(sockfd,&error_msg,sizeof(error_msg),0,(struct sockaddr*)&caddr,sizeof(caddr));
+    }
+    pthread_mutex_unlock(&list_mutex);
 }

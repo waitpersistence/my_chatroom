@@ -2,6 +2,7 @@
     "files.associations": {
         "server_new": "c",
         "pthread.h": "c",
-        "ip.h": "c"
+        "ip.h": "c",
+        "select.h": "c"
     }
 }
