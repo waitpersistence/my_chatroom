@@ -3,6 +3,9 @@
         "server_new": "c",
         "pthread.h": "c",
         "ip.h": "c",
-        "select.h": "c"
+        "select.h": "c",
+        "inet.h": "c",
+        "socket": "c",
+        "stdio.h": "c"
     }
 }

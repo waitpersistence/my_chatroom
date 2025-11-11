@@ -57,9 +57,19 @@ int main(int argc, char const *argv[])
     int sockfd;
     socklen_t len = sizeof(caddr);  // 客户端地址长度
     msg_t msg;
+    int listen_fd=socket(AF_INET,SOCK_STREAM,0);
+    struct sockaddr_in saddr;
+    memset(&saddr,0,sizeof(saddr));
+    saddr.sin_family=AF_INET;
+    saddr.sin_addr.s_addr=htonl(INADDR_ANY);
+    saddr.sin_port=htons(8888);
 
+    bind(listen_fd,(struct sockaddr *)&saddr,sizeof(saddr));
+
+    listen(listen_fd,5);
+    
     // 创建UDP socket
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    //sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0)
     {
         perror("socket error");
